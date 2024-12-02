@@ -1,0 +1,37 @@
+Kernel kompilace
+	zvednout jádra na max, přidat nový disk
+	GRUB edit mode ‘e’ z boot menu – obsahuje UUID, initrd = inicializační ramdisk – kompilovaný file systém obsahující pouze ovladače, ze kterých si během bootování systém vybere ty, co chce (univerzálnost)
+
+Df
+ls /dev/sdb
+mkfs.ext4 /dev/sdb
+mount /dev/sdb /usr/src
+cd /usr/src
+wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.2.2.tar.xz
+xz -d linux-6.2.2.tar.xz
+tar -xf linux-6.2.2.tar
+ln -s linux-6.2.2  linux
+cd linux
+make menuconfig
+	load config soubor, v generalu přepsat na svůj login, uložit jako .config, exitnout
+make -j 16
+make modules
+make modules_install
+make install
+	hotovka – nesmim dostat kernel panic :-)
+cat proc/version – zkouska spravneho vypisu
+
+	rmmod e1000 / modprobe e1000, lsmod – vylistovani modulů
+	e1000 – síťový modul
+
+/proc/1, /proc/, ls  - config.gz – aktuální konfigurace kernelu
+/sys  
+
+
+3. přednáška – moduly, vytvoření a kompilace ovladače
+	stáhnout hello_dev
+make – vytvoření .ko souboru
+insmod hello_dev.ko
+lsmod, dmesg – kontrola, dmesg napíše dole zprávu, že se ovladač nahrál
+echo "ahoj" > /dev/hello
+cat /dev/hello

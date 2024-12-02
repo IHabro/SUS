@@ -1,0 +1,198 @@
+DNS
+
+-----------------------------
+
+-nano /etc/network/interfaces
+
+allow-hotplug enp0s8
+iface enp0s8 inet static
+        address 192.168.56.101/24
+
+-apt install bind9
+-apt install dnsutils udns-utils
+
+-nano /etc/bind/db.usa0006.cz
+
+$TTL 3h                            ;doba expirace všech záznamů
+@       IN      SOA     ns1.usa0006.cz. spravce.usa0006.cz. (  ; autoritativní DNS server + email správce bez @
+                         2024041909 ; seriové číslo, často ve formě data
+                         4h         ; jak často si stahuje data sekundární server
+                         2h         ; za jak dlouho se má sek.server pokusit stáhnout data při neúspěchu
+                         2w         ; kdy platnost dat v sek.serveru vyprší
+                         1h )       ; jak dlouho si mají data pamatovat cache servery
+;
+@       IN      NS      ns1.usa0006.cz. ; autoritativní servery pro doménu, musí mít i A záznamy
+@       IN      NS      ns2.usa0006.cz. ; autoritativní servery pro doménu, musí mít i A záznamy
+
+
+usa0006.cz.    IN      MX      10      smtp.usa0006.cz.  ; primární emailový server
+usa0006.cz.    IN      MX      20      smtp2.usa0006.cz. ; sekundární emailový server
+usa0006.cz.    IN      A       192.168.56.101          ; primární záznamy
+ns1            IN      A       192.168.56.101
+ns2            IN      A       192.168.56.102
+smtp           IN      A       192.168.56.101
+smtp2          IN      A       192.168.56.101
+www            IN      CNAME   usa0006.cz.
+wiki           IN      CNAME   usa0006.cz.
+test           IN      CNAME   usa0006.cz.
+mail           IN      CNAME   usa0006.cz.
+subdomena1     IN      A       192.168.56.101
+subdomena2     IN      CNAME   usa0006.cz.
+www1           IN      A       192.168.56.101
+www2           IN      A       192.168.56.101
+imap           IN      CNAME   smtp.usa0006.cz
+
+_smtp._tcp     IN      SRV     1 2 25   smtp.usa0006.cz
+_imap._tcp     IN      SRV     1 2 143  imap.usa0006.cz
+
+
+_http._tcp     IN      SRV     1 2 80  www1 ; _http sluzba, _tcp protokol, 1 priorita, 2 váha
+               IN      SRV     5 3 80  www2
+
+_http._tcp.www IN      SRV     1 2 80  www1.usa0006.cz. ; _http sluzba, _tcp protokol, 1 priorita, 2 váha
+               IN      SRV     5 3 80  www2.usa0006.cz.
+
+*._tcp         IN      SRV     0 0 0   .  ;ostatní služby nejsou podporovány
+
+
+-nano /etc/bind/named.conf.local
+
+acl "usa0006.cz" {
+        192.168.56.102;
+};
+
+zone "usa0006.cz" {
+       type master;
+       file "/etc/bind/db.usa0006.cz";
+       allow-transfer { "usa0006.cz"; };
+};
+
+zone "56.168.192.in-addr.arpa" {
+       type master;
+       file "/etc/bind/db.192.168.56";
+};
+
+
+- nslookup www.vsb.cz 127.0.0.1 (nefunguje)
+- cd /etc/bind
+- nano named.conf.options (odkomentovat forwarders { 158.196.0.53; }; )
+- service bind9 restart
+
+-nano /etc/bind/db.192.168.56
+
+$TTL    86400
+56.168.192.in-addr.arpa.       IN      SOA     ns1.usa0006.cz admin.usa0006.cz. (
+                           20120820 ; serial
+                           4h       ; slave refresh
+                           2h       ; slave retry interval
+                           2w       ; slave data expiration
+                           1h )     ; maximum caching time when lookups fail
+;
+56.168.192.in-addr.arpa.       IN      NS      ns1.usa0006.cz.
+56.168.192.in-addr.arpa.       IN      NS      ns2.usa0006.cz.
+
+10.56.168.192.in-addr.arpa.    IN      PTR     webserver.usa0006.org.
+1.56.168.192.in-addr.arpa.     IN      PTR     router.usa0006.org.
+
+
+-----------------------------
+
+LAMP
+
+-----------------------------
+
+-apt-get install apache2
+-apt-get install libapache2-mod-php
+
+-apt-get install mariadb-server
+
+- mysql -u root -p
+MariaDB [(none)]> use mysql
+MariaDB [mysql]> CREATE USER 'wiki'@'localhost' IDENTIFIED BY 'wiki';
+MariaDB [mysql]> \q
+- mysql -u root
+MariaDB [(none)]> CREATE DATABASE wiki;
+MariaDB [(none)]> use wiki
+MariaDB [wiki]> GRANT ALL ON wiki.* TO wiki@localhost;
+Query OK, 0 rows affected (0.01 sec)
+MariaDB [wiki]>\q
+
+# mysql -u root -p
+MariaDB [(none)]> use mysql
+MariaDB [mysql]> CREATE USER 'roundcube'@'localhost' IDENTIFIED BY 'roundcube';
+MariaDB [mysql]> \q
+# mysql -u root
+MariaDB [(none)]> CREATE DATABASE roundcube;
+MariaDB [(none)]> use roundcube
+MariaDB [wiki]> GRANT ALL ON roundcube.* TO roundcube@localhost;
+Query OK, 0 rows affected (0.01 sec)
+MariaDB [wiki]>\q
+
+-cd /var/www
+
+wget https://releases.wikimedia.org/mediawiki/1.41/mediawiki-1.41.1.zip
+unzip mediawiki-1.41.1.zip
+
+ln -s mediawiki-1.41.1 wiki.usa0006.cz
+
+sudo scp /home/osboxes/Downloads/LocalSettings.php usa0006@192.168.56.103:/var/www/
+
+-----------------------------
+
+SMTP
+
+-----------------------------
+
+-apt install postfix
+usa0006.cz
+
+-nano /etc/postfix/main.cf
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128 192.168.56.0/24
+
+sender_canonical_maps = hash:/etc/postfix/canonical
+recipient_canonical_maps = hash:/etc/postfix/canonical
+
+home_mailbox = Maildir/
+
+-apt install telnet
+
+-nano /etc/aliases
+studenti: usa0006@usa0006.cz, usa0007@usa0006.cz
+ivan.usachev: usa0006@usa0006.cz
+
+-newaliases
+
+-cd /etc/postfix/
+-nano canonical
+usa0006@usa0006.cz ivan.usachev@usa0006.cz
+-postmap canonical
+-service postfix restart
+
+-apt install dovecot-imapd
+
+-nano /etc/dovecot/conf.d/10-mail.conf:
+mail_location = maildir:~/Maildir/
+
+-nano /etc/dovecot/conf.d/10-auth.conf:
+disable_plaintext_auth = no
+
+-service dovecot restart
+
+-apt install roundcube
+
+-cd /etc/apche2
+-cd sites-av
+
+cp wiki mail
+nano mail
+
+-cd /var/www
+
+-ln -s /usr/share/roundcube/ mail.usa0006.cz
+
+-----------------------------
+
+SSL
+
+-----------------------------
+

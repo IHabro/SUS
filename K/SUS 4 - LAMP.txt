@@ -1,0 +1,111 @@
+
+DNS1:
+	mcedit /etc/bind/db.hab0065.cz:
+		CNAME www1.hab0065.cz
+		hab0065.cz.    IN      A       192.168.57.30          ; primární záznamy
+
+	nslookup wiki.hab0065.cz 127.0.0.1
+
+další klon LAMP:
+	nastavit klasicky static IP .30
+
+	ping hab0065.cz (by neměl fungovat)
+
+	mcedit /etc/resolv.conf:
+		nameserver 192.168.57.10 (prostě moje DNS)
+
+	ping hab0065.cz (by měl fungovat)
+
+	apt-get install apache2
+
+klidně na hostu web 192.168.57.30 by měl jet
+
+	v etc/hosts změním dvou hostovu DNS na 192.168.57.10
+
+	cd /etc/apache2
+	cd sites-available
+	cp 000-default.conf test.hab0065.cz.conf
+
+	mcedit test.hab0065.cz.conf:
+		VirtualHost:test.hab0065.cz:80
+
+		ServerName www1.hab0065.cz
+
+		DocumentsRoot /var/www/test.hab0065.cz
+
+	cd ..
+	a2ensite test.hab0065.cz
+	systemctl reload apache2
+	cd /var/www/
+	mkdir test.hab0065.cz
+	mcedit test.hab0065.cz/index.html:
+		TEST
+	
+web test.hab0065.cz ukazuje TEST
+
+	apt-get install libapache2-mod-php
+
+	mv index.html index.php
+
+	mcedit index.php:
+		<?php
+			phpinfo();
+			phpinfo(INFO_MODULES);
+		?>
+
+	apt-get install mariadb-server
+
+	mysql -u root -p:
+		use mysql
+		CREATE USER 'wiki'@'localhost' IDENTIFIED BY 'wiki';
+		\q
+
+	mysql -u root:
+		CREATE DATABASE wiki;
+		use wiki
+		GRANT ALL ON wiki.* TO wiki@localhost;
+		\q
+
+	cd /var/www
+	wget https://releases.wikimedia.org/mediawiki/1.39/mediawiki-1.39.2.zip
+	unzip mediawiki-1.39.2.zip
+
+	ln -s mediawiki-1.39.2/ wiki.hab0065.cz
+	ls -la
+
+	cd /etc/apache2
+	cd sites-available
+	cp 000-default.conf wiki.hab0065.cz.conf
+
+	mcedit wiki.hab0065.cz.conf:
+		VirtualHost:wiki.hab0065.cz
+
+		ServerName www1.hab0065.cz
+
+		DocumentsRoot /var/www/wiki.hab0065.cz
+
+	a2ensite wiki.hab0065.cz
+	systemctl reload apache2
+
+web wiki.hab0065.cz ukazuje mediawikinu
+
+	apt install php-mbstring
+	apt install php-xml
+	apt install php-intl
+	apt install php-mysql
+
+	service apache2 restart
+
+	instalace:
+		localhost
+		wiki
+		wiki
+		wiki
+
+	zkoušet milionkrát
+
+	zaškrtnout "I'm bored already"
+
+	stáhne se localsettings.php, hodím to na LAMP
+	scp co uživatel@kam:/složka
+	dát to do /var/www/wiki.hab0065.cz/

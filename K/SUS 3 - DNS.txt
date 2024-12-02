@@ -1,0 +1,159 @@
+DNS 1 a DNS 2 - vboxnet 1, statická IP (jako v předchozím příkladě) - ssh funguje
+
+DNS1:
+	nslookup post.cz - používáme nějaký DNS, vypíše se adresa
+	cat /etc/resolv.conf - bude tam něco
+
+	apt install bind9
+	apt install dnsutils udns-utils
+
+	nslookup post.cz 158.196.0.53
+	nslookup post.cz 8.8.8.8
+	nslookup post.cz 192.168.57.10 (sebe sama)
+
+	ls /etc/bind - jsou tam zóny, local, options (forwarders - kořenové DNS, napsat tam školu)
+	případně tam doplnit:
+	dnssec-validation yes;
+
+	service bind9 restart
+	nslookup post.cz 192.168.57.10
+
+	nano /etc/bind/db.<login>.cz
+$TTL 3h 			   ;doba expirace všech záznamů
+@       IN      SOA     ns1.<login>.cz. spravce.<login>.cz. (  ; autoritativní DNS server + email správce bez @
+						2023032200 ; seriové číslo, často ve formě data
+						4h         ; jak často si stahuje data sekundární server
+						2h         ; za jak dlouho se má sek.server pokusit stáhnout data při neúspěchu
+						2w         ; kdy platnost dat v sek.serveru vyprší
+						1h )       ; jak dlouho si mají data pamatovat cache servery
+;
+@       IN      NS      ns1.<login>.cz. ; autoritativní servery pro doménu, musí mít i A záznamy
+@       IN      NS      ns2.<login>.cz. ; autoritativní servery pro doménu, musí mít i A záznamy
+
+
+<login>.cz.    IN      MX      10      smtp.<login>.cz.  ; primární emailový server
+<login>.cz.    IN      MX      20      smtp2.<login>.cz. ; sekundární emailový server
+<login>.cz.    IN      A       192.168.57.10          ; primární záznamy
+ns1            IN      A       192.168.57.10
+ns2            IN      A       192.168.57.11
+smtp           IN      A       192.168.57.101
+smtp2          IN      A       192.168.57.102
+www            IN      CNAME   <login>.cz.
+wiki	       IN      CNAME   <login>.cz.
+test	       IN      CNAME   <login>.cz.
+subdomena1     IN      A       192.168.57.101
+subdomena2     IN      CNAME   <login>.cz.
+www1	       IN      A       192.168.57.101
+www2           IN      A       192.168.57.101
+
+_http._tcp     IN      SRV     1 2 80  www1 ; _http sluzba, _tcp protokol, 1 priorita, 2 váha
+				IN      SRV     5 3 80  www2
+
+_http._tcp.www IN      SRV     1 2 80  www1.<login>.cz. ; _http sluzba, _tcp protokol, 1 priorita, 2 váha
+				IN      SRV     5 3 80  www2.<login>.cz.
+
+*._tcp         IN      SRV     0 0 0   .  ;ostatní služby nejsou podporovány
+
+	nano /etc/bind/named.conf.default-zones
+
+		zone "<login>.cz" {
+       		type master;
+       		file "/etc/bind/db.<login>.cz";
+		};
+
+	named-checkconf
+	service bind9 restart
+
+	nslookup <login>.cz 192.168.57.10
+	nslookup smtp.<login>.cz 192.168.57.10
+
+	nano /etc/bind/named.conf.default-zones:
+		acl "<login>.cz" {
+			192.168.57.11;
+		};
+
+		zone "<login>.cz" {
+       		type master;
+       		file "/etc/bind/db.<login>.cz";
+       		allow-transfer { "<login>.cz"; };
+		};
+	
+	named-checkconf
+	service bind9 restart
+
+DNS2:
+	apt install bind9
+	apt install dnsutils udns-utils
+
+	nano /etc/bind/named.conf - forwarders, napsat tam školu
+
+	nano /etc/bind/named.conf.default-zones:
+		masters <login>.cz-master { 192.168.57.10; };
+
+		zone <login>.cz {
+			type slave;
+			file "/var/cache/bind/db.<login>.cz";
+			masters { <login>.cz-master; };
+		};
+
+	named-checkconf
+	service bind9 restart
+
+	nslookup <login>.cz 192.168.57.11
+
+DNS1:
+	nano /etc/bind/db.<login>.cz:
+		změnit tam www1 na něco jiného, zvýšit číslo
+
+	service bind9 restart
+
+DNS2: 
+	dám lookup na co, na co jsem to změnil a mělo by to nějak jet nebo co
+
+
+
+
+Reverzní záznamy:
+
+DNS1:
+	nano /etc/bind/db.192.168.57
+		$TTL    86400
+		57.168.192.in-addr.arpa.       IN      SOA     ns1.<login>.cz admin.<login>.cz. (
+								2023032300 ; serial
+								4h       ; slave refresh
+								2h       ; slave retry interval
+								2w       ; slave data expiration
+								1h )     ; maximum caching time when lookups fail
+		;
+		57.168.192.in-addr.arpa.       IN      NS      ns1.<login>.cz.
+		57.168.192.in-addr.arpa.       IN      NS      ns2.<login>.cz. 
+
+		10.57.168.192.in-addr.arpa.    IN      PTR     webserver.<login>.org.
+		1.57.168.192.in-addr.arpa.     IN      PTR     router.<login>.org.
+
+	nano /etc/bind/db.192.168.57:
+		zone "57.168.192.in-addr.arpa" {
+       type master;
+       file "/etc/bind/db.192.168.57";
+	};
+
+	service bind9 restart
+
+DNSX:
+	nslookup 192.168.57.1 192.168.57.10
+	vypíše 1.57.168.192.in-addr.arpa       name = router.<login>.org.
+	protože v /etc/bind/db.192.168.57 je ta adresa definovaná pro router.<login>.org
+
+	nebo:
+		nslookup smtp.vsb.cz 192.168.57.11
+		- vrátí Address: 158.196.149.155
+		nslookup 158.196.149.155 192.168.57.11
+		- vrátí 155.149.196.158.in-addr.arpa    name = smtp.vsb.cz
+
+reverzní dns z ip adresy udělá adresu, co na ní běží
+nslookup
+set type=mx
+vsb.cz
+
+
+nslookup smtp.vsb.cz

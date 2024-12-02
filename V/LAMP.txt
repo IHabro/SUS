@@ -1,0 +1,122 @@
+### DNS1
+/etc/bind/db.hab0065.cz ->
+www1           IN      A       192.168.57.30 (adresa LAMP)
+www2           IN      A       192.168.57.30 (adresa LAMP)
+lamp           IN      A       192.168.57.30 (adresa LAMP)
+www            IN      CNAME   lamp.hab0065.cz.
+wiki           IN      CNAME   lamp.hab0065.cz.
+mail           IN      CNAME   lamp.hab0065.cz.
+
+
+### LAMP
+ifdown enp0s8
+mcedit /etc/network/interfaces -> upravit ip na 192.168.56.80
+ifup enp0s8
+
+
+apt install apache2 -y
+http://192.168.56.80/ -> v prohlizeci jde kontrola ze apache jede
+
+
+cd /etc/apache2/
+mcedit apache2.conf -> neni potreba menit
+mcedit envvars
+mcedit ports.conf
+
+
+conf-available, mods-available, sites-available
+ls mods-available/ -> dostupne moduly
+ls sites-available -> stranky
+
+
+cd mods-enabled/
+a2enmod ssl -> povoleni ssl
+systemctl restart apache2
+
+
+cd ../sites-available/
+a2ensite default-ssl.conf
+systemctl reload apache2
+
+cd /etc/apache2/sites-available
+cp 000-default.conf www.hab0065.cz.conf
+mcedit www.hab0065.cz.conf ->
+    ServerName www.hab0065.cz
+    DocumentRoot /var/www/www.hab0065.cz
+
+cd /var/www
+mkdir www.hab0065.cz
+mcedit www.hab0065.cz/index.php
+echo "<?php phpinfo(); ?> Hello there, from LAMP" > www.hab0065.cz/index.php
+
+cd /etc/apache2/sites-enabled/
+a2ensite www.hab0065.cz
+systemctl reload apache2
+
+
+apt install lynx -y
+lynx www.hab0065.cz
+(na skolnim pc si nezmenime dns, takze musime pouzit web browser v konzoli na vm s nasi dns)
+
+
+lamp = linux, apache, mariadb (mysql), php...
+
+
+apt install libapache2-mod-php -y
+
+
+cd /var/www/www.hab0065.cz/
+mv index.html index.php
+mcedit index.php ->
+<?php
+	phpinfo()
+?>
+
+// Pred konfenim wiki je třeba nastavit DB:
+apt install php-mbstring php-xml php-intl -y
+apt install php-mysql -y
+apt install mariadb-server -y
+
+
+Přidání uživatele do databáze
+# mysql -u root -p
+MariaDB [(none)]> use MySQL
+MariaDB [mysql]> CREATE USER 'wiki'@'localhost' IDENTIFIED BY 'wiki'; // identified by je heslo
+MariaDB [mysql]> \q
+
+
+# mysql -u root
+MariaDB [(none)]> CREATE DATABASE wiki;
+MariaDB [(none)]> use wiki
+MariaDB [wiki]> GRANT ALL ON wiki.* TO wiki@localhost;
+Query OK, 0 rows affected (0.01 sec)
+MariaDB [wiki]>\q
+
+// Konfeni wiki
+cd /var/www/
+mkdir wiki.hab0065.cz
+
+cd /etc/apache2/sites-available/
+cp www.hab0065.cz.conf wiki.hab0065.cz.conf
+mcedit wiki.hab0065.cz.conf -> upravit
+a2ensite wiki.hab0065.cz.conf
+systemctl reload apache2
+ls ../sites-enabled/ -> kontrola
+
+cd /var/www/
+apt install wget -y
+wget https://releases.wikimedia.org/mediawiki/1.42/mediawiki-1.42.3.zip
+unzip mediawiki-1.42.3.zip (pry nedelat pres mc bo to bude nadlouho :D)
+
+mv mediawiki-1.42.3/* wiki.hab0065.cz/
+
+// Tady je potřeba udělat, protože lynx wiki.hab0065.cz autoamticky bere nejvyšší vhodnou site, což je default 000:
+a2dissite 000-default.conf
+
+nastavit media wiki, pres ten cmd web browser je to sranda, pri testu nam na skolnim pc zmeni na nasi dns
+heslo12345 - tohle projde
+
+scp LocalSettings.php 192.168.56.80:/tmp
+cp /tmp/LocalSettings.php /var/www/wiki.hab0065.cz
+
+- je tam jeste nejaky problem se styly, ale normalne to najede, idealne vyzkouset v normalnim prohlizeci

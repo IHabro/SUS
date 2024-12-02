@@ -1,0 +1,206 @@
+klonovat -> konf síťovky:zvolit vboxnet1, bo tam není DHCP
+
+nano /etc/network/interfaces - dodat (nějak tak už to tam je):
+	allow-hotplug
+	iface enp0s8 inet static
+		address 192.168.57.2/24
+
+ifup enp0s8
+
+tady už je možné ssh
+
+apt install isc-dhcp-server
+
+nano /etc/dhcp/dhcpd.conf:
+	option domain-name "vsb.cz";
+	option domain-name-servers 158.196.0.53;
+
+	*nějaké 2 řádky*
+
+	subnet 192.168.57.0 netmask 255.255.255.0 {
+	range 192.168.57.100 192.168.57.200;
+	option broadcast-address 192.168.57.255;
+	option routers 192.168.57.2;
+	next-server 192.168.57.2;
+	filename "pxelinux.0";
+	}
+
+nano /etc/default/isc-dhcp-server
+	INTERFACESv4='enp0s8' - tu bude dhcp
+
+dhcpd -t - čekne konfiguraci
+service isc-dhcp-server restart
+service isc-dhcp-server status
+
+další klon (klient), pouze síťovka vboxnet1:
+	ip add
+	měl by dostat IP z rozsahu 192.168.57.2/24
+	ip route
+	mělo by být 192.168.57.2
+	ping na 8.8.8.8 by jet neměl
+
+na serveru:
+	apt-get install nftables
+
+	nft add table nat
+	nft add chain nat postrouting { type nat hook postrouting priority 100 \; }
+	nft add rule nat postrouting masquerade
+
+	nano /etc/nftables.conf: přidat na konec
+		add table nat
+		add chain nat postrouting { type nat hook postrouting priority 100; }
+		add rule nat postrouting masquerade
+
+	service nftables status
+	systemctl enable nftables
+	service nftables status - bude tam někde "enabled"
+
+	echo 1 > /proc/sys/net/ipv4/ip_forward (na klientovi by měl jet ping 8.8.8.8)
+
+	nano /etc/sysctl.conf
+		net ipv4 ip_forward = 1
+
+	apt install tftpd-hpa
+	nano /etc/default/tftpd-hpa
+		TFTP_USERNAME="tftp"
+		TFTP_DIRECTORY="/srv/
+		...a nějaké další řádky
+
+	cd /srv/tftp
+	echo ahoj > test.txt
+
+na klientovi
+	apt install tftp-hpa
+	tftp 192.168.57.2
+	binary
+	get test.txt
+	quit
+	cat test.txt
+
+na serveru:
+	cd /srv/tftp
+	apt install wget
+	wget http://ftp.debian.org/debian/dists/stable/main/installer-amd64/current/images/netboot/netboot.tar.gz
+
+	tar -xvzf netboot.tar.gz
+
+úplně nový systém (netboot):
+	nepřidávat pevný disk
+	síťovka pouze s hostem
+	vboxnet1
+	system -> boot ze sítě
+
+	po spuštění by se měla spustit instalace debianu
+
+na serveru:
+	apt install nfs-kernel-server
+	mkdir /srv/rootfs
+
+	nano /etc/exports
+		/srv/rootfs					192.168.57.0/24(rw,async,no_root_squash)
+		/home						192.168.57.0/24(rw,async)
+
+	možnost no_root_squash znamená, že tam root může psát, jinak by nemohl
+
+	service nfs-server restart
+	service nfs-server status
+
+	exportfs
+
+na klientovi:
+	apt install nfs-common
+
+	mount 192.168.57.2:/srv/rootfs /mnt/
+	cd /mnt/
+	touch pokus.txt
+
+na serveru:
+	ls (půjde vidět pokus.txt)
+
+	mc
+	nastavit si na jednu stranu /srv/rootfs a na druhou kořen /
+	zkopčit nebo vytvořit
+
+	bin -> cp
+	boot -> cp
+	dev
+	etc -> cp
+	home
+	lib -> cp
+	lib64 -> cp
+	media
+	mnt
+	opt -> cp
+	proc
+	root -> cp
+	run
+	sbin -> cp
+	srv -> cp (možná nekopítovat bo jsem v ní)
+	sys
+	tmp
+	usr -> cp
+	var -> cp
+
+	mkdir tmp
+	chmod 777 ./tmp
+	chmod o+t ./tmp
+
+	čeknout práva složek v / a jestli jsou stejné práva jako v /srv/rootfs
+
+	mkdir /srv/tmp
+
+	z /srv/tftp všechno zkopčit do /srv/tmp
+
+	Najít v systému tohle a hodit to do /srv/tftp (něco tam je jako link, něco je v debian installeru)
+		ldlinux.c32
+		libcom32.c32
+		libutil.c32
+		pxelinux.0
+		vesamenu.c32
+
+	udělat složku pxelinux.cfg (zrušit link, co tam už takhle je)
+		udělat soubor default
+			DEFAULT vesamenu.c32
+			PROMPT 0
+ 
+			MENU TITLE  Boot Menu
+
+			LABEL Debian - NetBoot
+			KERNEL /Debian/<VMLINUZ soubor>
+			APPEND initrd=/Debian/<INITRD soubor> root=/dev/nfs nfsroot=192.168.57.2:/srv/rootfs ip=dhcp rw
+
+	složka Debian:
+		zkopčit tam z /boot nějaké 2 soubory (vmlinuz a initrd)
+		vmlinuz-5.10.0-21-amd64
+		initrd.img-5.10.0-21-amd64
+
+	service tftpd-hpa restart
+
+
+	ve filesystému klienta měnit!
+		cd /srv/rootfs
+
+		nano ./etc/network/interfaces
+			zakomentit tam interfacy
+		nano ./etc/fstab
+			všechno zakomentit
+
+znova spustit netboot:
+	mělo by fičet
+	odinstalovat DHCP, tftp
+	apt remove isc-dhcp-server
+	apt remove tftp-hpa
+
+na netbootu:
+	mount
+	cca 6. řádek je vidět mount DHCP serveru by se mělo mountovat do serveru
+	
+
+
+
+
+špeky:
+je to jen pro jeden komp, nebo pro každý by měl server dalši filesystem
+/mnt složka se mountuje do RAMky
+/var/log se bude psát na server
+kolikrát si klient o IP adresu (boot, pxelinux, kernel)

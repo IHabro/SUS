@@ -1,0 +1,221 @@
+# Server boot
+
+- všechno se konfiguruje na `BOOT_SERVER` počítači pokud není napsané jinak
+
+1. Nový virtuální počítač (`BOOT_SERVER`)
+    - linked clone
+    - settings -> network
+        - adapter 1 = NAT
+        - adapter 2 = Host-only Adapter - vboxnet1 (vypnutý DHCP server)
+    - pro přehlednost přejmenovat pc
+        - `/etc/hostname`
+        - `hostname serverboot`
+        - `shutdown now -r`
+
+2. Nastavení statické ip adresy (zejména pro SSH)
+    - přidat do `/etc/network/interfaces`
+        ```
+        allow-hotplug enp0s8
+        iface enp0s8 inet static
+            address 192.168.57.2/24
+        ```
+    - `ifup enp0s8` - zapnutí interface
+    - `ip a` - výpis ip adres
+
+3. Přihlášení přes SSH
+    - `ssh user@192.168.57.2` - SSH defaultně nejde přes root uživatele
+    - `su -` - přepnutí uživatele na roota, `-` zajistí změnu práv
+
+4. Instalace a nastavení DHCP serveru
+    - `apt update` - není potřeba
+    - `apt install isc-dhcp-server` - vyhodí chyby, protože automaticky spuštění dalšího DHCP servere na síti udělá nepořádek v síti FIXME: čestina xd
+    - v `/etc/default/isc-dhcp-server` upravit na `INTERFACESv4="enp0s8"`
+    - v `/etc/dhcp/dhcpd.conf` upravit na
+        ```
+        option domain-name "vsb.cz";                # neni potreba menit
+        option domain-name-servers 158.196.0.53;    # skolni DNS
+        
+        subnet 192.168.57.0 netmask 255.255.255.0 {
+            range 192.168.57.100 192.168.57.200;
+            option broadcast-address 192.168.57.255;
+            option routers 192.168.57.2;
+        }
+        ```
+    - `dhcpd -t` - když není chyba vypíše nějaké info, když je chyba, tak vypíše přímo tu chybu
+    - `service isc-dhcp-server start`
+    - `service isc-dhcp-server status`
+
+5. Testování DHCP serveru
+    - vytvořit nový virtualní počítač (`BOOT_SERVER_TEST_DHCP`)
+    - linked clone
+    - settings -> network
+        - adapter 1 = Host-only Adapter - vboxnet1 (vypnutý DHCP server)
+        - adapter 2 = vypnutý
+    - zapnout počítač a vyzkoušet že dostal ip adresu a ping
+        - `ip a` - adresa bude z nastaveného rozsahu
+        - `ping 192.168.57.2` - ping na gateway
+        - `cat /etc/resolv.conf` - kontrola doménového jména a DNS
+
+6. Zprovoznění NATu
+    - `nft add table nat`
+    - `nft add chain nat postrouting { type nat hook postrouting priority 100 \; }`
+    - `nft add rule nat postrouting masquerade` - místo `masquerade` jde zadat i ip adresu, ale mám je dynamicky tak tam musí být tohle a vybere to první ip adresu daného interfacu
+    - `nft list ruleset`
+    - `nft list ruleset > /etc/nftables.conf`
+    - `systemctl enable nftables` - povolení služby i po restartu systému
+    - `service nftables status`
+    - `echo 1 > /proc/sys/net/ipv4/ip_forward`
+    - v `/etc/sysctl.conf` odkomentovat `net.ipv4.ip_forward=1` - povolení přeposílání packetů i po restartu systému
+    - `sysctl -a | grep net.ipv4.ip_forward` - kontrola nastavení
+    - teď už bude `ping 8.8.8.8` na testovacím počítači fungovat
+
+7. Zprovoznění FTP pro přenos souborů
+    - `BOOT_SERVER`
+        - `apt install tftpd-hpa`
+        - `/etc/default/tftpd-hpa` - nastevení FTP serveru
+        - pro test
+            - `cd /srv/tftp`
+            - `echo AHOJ > ahoj`
+    - `BOOT_SERVER_TEST_DHCP`
+        - `apt install tftp-hpa`
+        - `tftp 192.168.57.2` - připojení k serveru
+        - `binary` - přepnutí do binárního módu
+        - `get ahoj`
+        - `quit`
+        - soubor `ahoj` se nakopíroval do aktuálního adresáře
+
+8. Příprava na boot ze sítě
+    - do `/etc/dhcp/dhcpd.conf` dopsat takhle
+        ```
+        subnet 192.168.57.0 netmask 255.255.255.0 {
+            range 192.168.57.100 192.168.57.200;
+            option broadcast-address 192.168.57.255;
+            option routers 192.168.57.2;
+            next-server 192.168.57.2;                   # <-- dopsat, rekni si tomuhle serveru o soubor ze ktereho budes bootovat
+            filename "pxelinux.0";                      # <-- dopsat, soubor ze ktereho bude bootovat, binarka ktera se rozjede na pocitaci a vybirame si ktery system chceme spustit
+        }
+        ```
+    - `dhcpd -t`
+    - `service isc-dhcp-server restart`
+    - `service isc-dhcp-server status`
+    - `cd /srv/tftp` - od posledního přesunu do tohohle adresáře nebylo potřeba jít jinam, ale pro jistotu jsem to sem napsal
+    - `apt install wget -y`
+    - `wget http://ftp.debian.org/debian/dists/stable/main/installer-amd64/current/images/netboot/netboot.tar.gz`
+    - `tar -xvf netboot.tar.gz`
+    - připraveno na bootování ze sítě, ale nenabootuje OS
+
+9. Vytvoření virtuálního počítače pro bootování ze sítě (`BOOT_SERVER_NETBOOT`)
+    - nevyváří se klon, ale nový virtuální počítač
+    - `Do Not Add a Virtual Hard Disk`
+    - settings -> network
+        - adapter 1 = Host-only Adapter - vboxnet1
+    - settings -> system
+        - Boot Order: jen Network
+    - po nastartování najede installer pro Debian na disk ze sítě (my ale máme počítač bez disku, takže by to nefungovalo)
+
+10. Příprava bootu ze sítě
+    - `BOOT_SERVER`
+        - teď je potřeba rozchodit OS aby šel nabootovat ze sítě
+        - `apt install nfs-kernel-server -y` - systém sdílení souborů po síti
+        - do `/etc/exports` dopsat
+            ```
+            /srv/bootfs  192.168.57.0/24(rw,sync,no_subtree_check,no_root_squash)
+            /home        192.168.57.0/24(rw,async)
+            # slozka kterou exportujeme do site | rozsah adres pro ktere to exportujeme | parametry
+            ```
+        - `mkdir /srv/bootfs` - potřeba vytvořit před restartem, protože exportovaná složka neexistovala
+        - `service nfs-kernel-server restart`
+        - `service nfs-kernel-server status`
+        - pro test
+            - `cd /srv/bootfs`
+            - `echo HELLO > hello`
+    - `BOOT_SERVER_TEST_DHCP`
+        - `apt install nfs-common`
+        - `mount 192.168.57.2:/srv/bootfs /mnt`
+        - `cd /mnt`
+        - soubor `hello` je zpřístupněn přes NFS
+
+11. Vytvoření bootováného root file systému
+    - `cp -a /usr/bin/ .` - binarky - `ls`, `cat` atd.
+    - `cp -a /boot .` - kernely
+    - `mkdir dev` - systemova zarizeni - disky, terminaly atd.
+    - `cp -a /etc .` - konfigurace systemovych sluzeb
+    - `cp -a /home .`
+    - `cp -a /lib .` - sdilene knihovny a moduly
+    - `cp -a /lib64 .` - sdilene knihovny pro 64 bitove programy
+    - `mkdir media`
+    - `mkdir mnt` - docasne pripojeni souborovych systemu
+    - `cp -a /opt .`
+    - `mkdir proc` - informace o systemu ale dnes se pouziva `/run`
+    - `cp -a /root .` - domovsky adresar roota
+    - `mkdir run` - informace o systemu
+    - `cp -a /sbin .` - jako `/bin` ale uzivatel musi mit root prava
+    - `mkdir srv`
+    - `mkdir sys` - informace o hardwaru
+    - `mkdir tmp` - docasne soubory
+    - `chmod 777 tmp`
+    - `chmod +t tmp` - soubory muzou byt smazany nebo upraveny pouze jeho vlastnikem, rootem nebo procesem ktery jej vyrvoril
+    - `cp -a /usr .`
+    - `cp -a /var .`
+    - FIXME: `service nfs-kernel-server restart`
+    - FIXME: `service nfs-kernel-server status`
+
+12. Příprava bootovaného kernelu
+    - `cd /srv/tftp`
+    - `rm ldlinux.c32`
+    - `cp debian-installer/amd64/boot-screens/ldlinux.c32 .`
+    - `cp debian-installer/amd64/boot-screens/libcom32.c32 .`
+    - `cp debian-installer/amd64/boot-screens/libutil.c32 .`
+    - `cp debian-installer/amd64/boot-screens/vesamenu.c32 .`
+    - `rm pxelinux.0`
+    - `cp debian-installer/amd64/pxelinux.0 .`
+    - FIXME: `rm pxelinux.cfg`
+    - `mkdir pxelinux.cfg`
+    - `rm netboot.tar.gz`
+    - `rm splash.png`
+    - `rm version.info`
+    - `cd pxelinux.cfg/`
+    - `mkdir kernel`
+    - `cp /boot/vmlinuz-6.1.0-28-amd64 ./kernel/`
+    - `cp /boot/initrd.img-6.1.0-28-amd64 ./kernel/`
+    - FIXME: `cd ..`
+    - soubor `/srv/tftp/pxelinux.cfg/default`
+        ```sh
+        # cp debian-installer/amd64/boot-screens/syslinux.cfg ./pxelinux.cfg/default
+        echo "DEFAULT vesamenu.c32
+        PROMPT 0
+
+        MENU TITLE  Boot Menu
+
+        LABEL Debian - NetBoot
+        KERNEL /kernel/vmlinuz-6.1.0-28-amd64
+        APPEND initrd=/kernel/initrd.img-6.1.0-28-amd64 root=/dev/nfs nfsroot=192.168.57.2:/srv/bootfs ip=dhcp rw" > pxelinux.cfg/default
+        ```
+    - FIXME: `cd /srv/tftp/pxelinux.cfg`
+    - FIXME: `mkdir installer`
+    - FIXME: `cp ../debian-installer/amd64/linux ./installer/`
+    - FIXME: `cp ../debian-installer/amd64/initrd.gz ./installer/`
+    - FIXME: do souboru `/srv/tftp/pxelinux.cfg/default` dopsat
+        ```
+        LABEL Debian Installer - NetBoot
+        KERNEL /installer/linux
+        APPEND initrd=/installer/initrd.gz --- quiet
+        ```
+    - FIXME: `cp -rf ./installer/ ../installer`
+    - FIXME: `cp -rf ./kernel/ ../kernel`
+    - FIXME: `rm -rf installer/`
+    - FIXME: `rm -rf kernel/`
+
+13. Oprava některých nakopírovaných souborů
+    - boot už skoro funguje, ale v nakopírovaných souborech je aktuálně už nastavené něco co ten klient nemá
+    - `cd /srv/bootfs`
+    - `./etc/fstab` vše zakomentovat
+    - `./etc/network/interfaces` nechat jen loopback a source
+    - FIXME: `rm -rf debian-installer/`
+
+14. Boot funguje
+    - `mount | grep nfs` - informace o mountu
+    - problémy tohoto řešení
+        - TCP se musí předělat na UDP, protože při změně ip adresy se systém na chvíli zasekne, protože vypadne spojení
+        - složka s logy by byla u více počítačů problém, takže by musela být v paměti virtuálního počítače nebo tzv. remote log
+        - stejný problém u složky tmp, to se klasicky řeší jako mountování do paměti počítače

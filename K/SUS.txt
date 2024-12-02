@@ -1,0 +1,559 @@
+SUS - Správa unixových systémù - poznámky
+----------------------------------------
+cv01 - instalace debianu postup viz seidl.cs.vsb.cz/wiki/index.php/SUS
+----------------------------------------
+- dhclient enp0s8 (nastaveni IP pro druhou sitovku)
+- ip addr (IP od enp0s8 -> putty -> login@IP -> prihlasit)
+----------------------------------------
+cv02 - kompilace kernelu
+----------------------------------------
+- klon debianu, propojeny
+- wget (url z www.kernel.org 4.15.7) --no-check-certificate
+- apt install make gcc libncurses-dev bc xz-utils libelf-dev libssl-dev (viz seidl.cs.vsb.cz/wiki/index.php/SUS)
+- xz -d linux-4.15.7.tar.xz
+- tar -xf linux-4.15.7.tar
+- ln -s linux-4.15.7 linux (link ukazujici na aktualni jadro)
+- wget konfigurace na strankach predmetu [15] - odkaz
+- cd linux-4.15.7
+- make menuconfig
+- general setup
+- local version - append ... pojmenoval mujlinux-login
+- load v dolnim menu: ../config_4.9.8 (configurak z webu) config_4.15.7 ?
+- ulozit do .config
+- make -j 16 (16 = v kolika vlaknech spustit kompilaci (dvojnasobek pocet jader procesoru!))
+- make modules_install (ve slozce usr/src/linux nebo linux-4.15.7)
+- make install (ve slozce usr/src/linux nebo linux-4.15.7)
+- shutdown -r now (restart)
+- advanced -> novy kernel
+- spustit
+----------------------------------------
+cv03 - moduly
+----------------------------------------
+modprobe prikaz pridava moduly / rmmod odstranuje moduly
+ls /proc/ ; ls /sys/ ;  jeste neco aby vyjel obri vypis "tty" atp.
+dmesg (ukazuje errory)
+rmmod hello_dev (remove modul)
+
+- wget http://seidl.cs.vsb.cz/iso/module_sample.tar (stáhne moduly z webu) 
+- tar -xf module_sample.tar (rozbali -> vytvoøí složky hello_dev, hello_proc)
+
+PROC
+- cd hello_proc
+- nano hello_proc.c (upravit seq_printf(m, login, HZ))
+- make
+- insmod hello_proc.ko
+- cat /proc/hello
+
+DEV
+- cd hello_dev
+- nano hello_dev.c <upravit: 
+*hello_str = login
+if (strlen(message) > 0)
+
+hello_str = message;
+
+>
+- make
+- insmod hello_dev.ko
+*nepovinne - muzeme overit nainstalovani modulu prikazem lsmod*
+- cat /dev/hello
+- echo [msg] > /dev/hello (posle novy text do souboru ... bez zavorek!  napr.: echo blaf > /dev/hello)
+- cat /dev/hello
+----------------------------------------
+cv4 - ISC-DHCPD server, netboot (jedno z moznych temat testu)
+----------------------------------------
+1)server instalace dhcp
+2) nastaveni filename pro stahovani zavadìèe ze serveru tftp pomoci udp
+3) nfs - sdileni souboru pres sit
+
+kernel se stara o IP klienta
+nfs - nebezpecne, muze vlezt kdokoliv, ale jde to upravit
+If no_root_squash is used, remote root users are able to change any file on the shared file system
+volba next-server, kterou urèíme, že se má TFTP klient pøipojovat k jiné IP adrese, než kde sídlí DHCP server.
+filename- cesta, která bude použita v dalším kroku, tedy pøi stahování zavadìèe ze serveru TFTP.
+bootmenu: nano /srv/tftp/pxelinux.cfg/default - nebo jmeno podle mac adresy
+na nacteni kernelu tftp protokol
+
+vytvoreni: klient (sitovka VBox1) + server (2 sitovky: NAT a VBox1) klonù debianu
+VB - vytvorit sit, VBox0 zapnout dhcp server, VBox1 (192.168.57.1, vypnuty dhcp)
+
+SERVER
+- vim /etc/network/interfaces (konfig staticke ip, otevre soubor) (nano?)
+	auto enp0s8
+	iface enp0s8 inet static 
+	address 192.168.57.2
+	netmask 255.255.225.0
+	broadcast 192.168.57.255
+- ifdown enp0s8 (interface down a up)
+- ifup enp0s8
+kontrola: ping 192.168.57.1
+apt-cache search dhcpd (vyhledani balicku co je treba nainstalovat..)
+- apt install isc-dhcp-server (nebat se cervenych failed :D) (apt-get?)
+- vim /etc/default/isc-dhcp-server (edit interfacesv4="enp0s8")
+- vim /etc/dhcp/dhcpd.conf ( upravit>
+option domain-name "vsb.cz" 
+option domain-name-servers 158.196.149.9 nebo 0.53 skolni sit!
+authoritative odkomentovat (neni nutne) 
+subnet odkomentovat 192.168.57.0 netmask 255.255.255.0 {range 192.168.57.100 192.168.57.200 option routers 192.168.57.2; } 
+< ulozit )
+- service ics-dhcp-server start
+- service ics-dhcp-server status (is ok?)
+- apt install nfs-kernel-server
+- vim /etc/exports (
+/home	192.168.57.*(rw, sync, no_subtree_check)
+)
+- service nfs-kernel-server stop
+- service nfs-kernel-server start
+- service nfs-kernel-server status
+- exportfs (vypise home a ip)
+- iptables -t nat -a postrouting -o enp0s3 -j masquerade (viz seidl.vsb.cz)
+- echo 1 > /proc/sys/net/ipv4/ip_forward (pro zprovozneni internetu)
+- apt install tftpd-hpa
+- cat /etc/default/tftpd-hpa (info)
+- cd /srv/tftp/
+- echo AHOJ > test.txt
+pokud chyba na klientovi tak ifdown a up enp0s8 + dhclient enp0s8
+
+
+KLIENT - jedna sitovka: vbox1 !!
+ip address (enp0s3 melo by byt 192.168.57.100)
+- apt install nfs-common 
+- mount 192.168.57.2: /home /home
+- mount | grep home (vidim)
+- touch /home/test (nefunguje - prihlaseni v nove konzoli ne pod roota a funguje) (SERVER ls /home/login/ - vidim neco)
+- apt install tftp-hpa (jemu prestal fungovat nat .. ?? server si zrusil IP adresu nastavenou rucne .. )
+- tftp (nebo rovnou tftp 192.168.57.2)
+	> connect 192.168.57.2
+	> binary
+	> get test.txt ( a nic ? )
+	> quit
+- ls -la (melo by byt test.txt ve slozce, cat test.txt - melo by obsahovat AHOJ)
+
+PUTTY login@192.168.57.2
+- su
+- cd /srv/tftp/
+- wget http://ftp.cz.debian.org/debian/dists/Debian9.4/main/installer-amd64/current/images/netboot/netboot.tar.gz (odkaz ze stranek)
+ ---- magic copy here --- mc > neco zkopiroval (modra obrazovka ..)
+- vim /etc/dhcp/dhcp.conf (pridat 2 radky )
+	next-server 192.168.57.2;
+	filename "pxelinux.0";
+- service isc-dhcpd-server restart
+
+KLIENT shutdown ? 
+VB: debian-klient system nastaveni boot ze site ? 
+spustit klienta
+
+v Putty: 
+- mc > nejak do /srv/tftp kopirovat z /drv/tftp/tmp/depian-installer nebo nekde tak:
+ldlinux.c32
+libcom32.c32
+libutil.c32
+pxelinux.cfg
+pxelinux.0
+vesamenu.c32
+
+- vim /srv/tftp/pxelinux.cfg
+- vim default
+DEFAULT vesamenu.c32
+PROMPT 0
+ 
+MENU TITLE  Boot Menu
+
+LABEL Debian - NetBoot
+KERNEL /Debian/vmlinuz-4.9.0-6-amd64
+APPEND initrd=/Debian/initrd.img-4.9.0-6-amd64 root=/dev/nfs nfsroot=192.168.57.2:/srv/tftp/Debian/root ip=dhcp rw
+
+
+SERVER
+ve slozce /srv/tftp mkdir Debian
+cd Debian/
+
+KLIENT restartovat (zmena boot menu)
+mount call failed
+
+SERVER
+mc a zas kopirovat do root nebo vytvorit novou slozku.. viz:
+	bin -> cp
+	boot -> cp
+	dev
+	etc -> cp
+	home
+	lib -> cp
+	media
+	mnt
+	opt -> cp
+	proc
+	root -> cp
+	run
+	sbin -> cp
+	srv -> cp
+	sys
+	tmp
+	usr -> cp
+	var -> cp
+cd /root
+chmod 777 tmp/
+chmod o+t tmp/
+ls -la
+- vim /etc/exports
+pridat /srv/tftp/Debian/root 192.168.57*(rw, sync, no_subtree_check, no_root_squash)
+
+- service nfs-kernel-server restart
+- service nfs-kernel-server status
+
+vim /etc/network/interfaces komentovat posledni radky zacina iface enp0s8 inet static
+vim /etc/network/fstab
+
+KLIENT restart - failed
+
+
+SERVER
+magic - neco pridal do /srv/tftp/pxelinux.cfg/default nebo kam - za Debian/root,upd
+
+vyhodit configuraci neceho nebo co?
+etc network interfaces u klienta zakomnetovat interfaces 
+
+----------------------------------------
+cv5 - DNS
+----------------------------------------
+klony debian serveru - DNS1 a DNS2 (sít s hostem a NAT)
+
+DNS1 (putty)
+ifdown enp0s8
+nano /etc/network/interfaces
+	smazat iface - prepsat na dhcp (ne staticka ip)
+ifup enp0s8
+(prihlasit pod roota)
+- apt update
+- apt install bind9
+- apt install dnsutils udns-utils
+- nslookup www.vsb.cz
+- cat /etc/resolv.conf
+- nslookup www.vsb.cz 158.196.149.9 (volba DNS pro dotazy)
+- nslookup www.vsb.cz 158.196.0.53
+- nslookup
+>server 158.196.149.9
+>set type=mx		(mailexchange)
+>vsb.cz
+- nslookup www.vsb.cz 127.0.0.1 (nefunguje)
+- cd /etc/bind
+- nano named.conf.options (odkomentovat forwarders { 158.196.0.53; }; )
+- service bind9 restart
+- service bind9 status (nslookup www.vsb.cz 127.0.0.1 funguje)
+- mc (/etc/bind)
+- nano db.cizova.cz (cd /etc/bind)
+*****************************************************************************************
+$TTL 3h 			   ;doba expirace všech záznamù
+@       IN      SOA     ns1.cizova.cz. spravce.cizova.cz. (  ; autoritativní DNS server + email správce bez @
+                         2018040302 ; seriové èíslo, èasto ve formì data (rok, mesic, den - vzdy inkrementovat pri kazde zmene)
+                         4h         ; jak èasto si stahuje data sekundární server
+                         2h         ; za jak dlouho se má sek.server pokusit stáhnout data pøi neúspìchu
+                         2w         ; kdy platnost dat v sek.serveru vyprší
+                         1h )       ; jak dlouho si mají data pamatovat cache servery
+;
+@       IN      NS      ns1.cizova.cz. ; autoritativní servery pro doménu, musí mít i A záznamy
+@       IN      NS      ns2.cizova.cz. ; autoritativní servery pro doménu, musí mít i A záznamy
+
+
+cizova.cz.    IN      MX      10      smtp.cizova.cz.  ; primární emailový server
+cizova.cz.    IN      MX      20      smtp2.cizova.cz. ; sekundární emailový server
+cizova.cz.    IN      A       192.168.56.101          ; primární záznamy
+ns1            IN      A       192.168.56.101
+ns2            IN      A       192.168.56.102
+smtp           IN      A       192.168.56.101
+smtp2          IN      A       192.168.56.102
+www            IN      CNAME   cizova.cz.
+wiki	       IN      CNAME   cizova.cz.
+test	       IN      CNAME   cizova.cz.
+subdomena1     IN      A       192.168.56.101
+subdomena2     IN      CNAME   cizova.cz.
+www1	       IN      A       192.168.56.101
+www2           IN      A       192.168.56.101
+
+_http._tcp     IN      SRV     1 2 80  www1 ; _http sluzba, _tcp protokol, 1 priorita, 2 váha
+               IN      SRV     5 3 80  www2
+
+_http._tcp.www IN      SRV     1 2 80  www1.cizova.cz. ; _http sluzba, _tcp protokol, 1 priorita, 2 váha
+               IN      SRV     5 3 80  www2.cizova.cz.
+
+*._tcp         IN      SRV     0 0 0   .  ;ostatní služby nejsou podporovány
+***********************************************************************************************
+- nano named.conf.local
+zone "cizova.cz" {
+       type master;
+       file "/etc/bind/db.cizova.cz";
+};
+- service bind9 restart
+- service bind9 status
+- nslookup www.cizova.cz 127.0.0.1 (funguje :))))
+- nslookup wiki.cizova.cz atp.
+
+
+DNS2 (zmenit znova ip na dhcp tak jako u DNS1)
+- apt update
+- apt install bind9
+
+
+DNS1
+- nano named.conf.local
+acl "cizova.cz" {
+	192.168.56.102; //??
+};
+
+zone "cizova.cz" {
+       type master;
+       file "/etc/bind/db.cizova.cz";
+       allow-transfer { "cizova.cz"; };
+};
+- service bind9 restart
+- service bind9 status
+
+
+DNS2
+- cd /etc/bind
+- nano named.conf.local
+masters cizova.cz-master { 192.168.56.101; };
+
+zone cizova.cz {
+	type slave;
+	file "/var/cache/bind/db.cizova.cz";
+	masters { cizova.cz-master; };
+};
+- service bind9 restart
+- service bind9 status
+
+
+DNS1
+kontrola:
+
+nslookup ns2.cizova.cz 192.168.56.101
+nslookup ns2.cizova.cz 192.168.56.102 
+
+
+---------------------------------------
+webovy server apache
+---------------------------------------
+DNS1
+- apt install apache2
+pro kontrolu - browser ip adresa stroje (apache it works! strana)
+- cd /etc/apache2
+- mc
+- cd sites-available
+- cp 000-default.conf test.cizova.cz.conf
+- nano test.cizova.cz.conf
+<virtualhost test.cizova.cz:80>
+documentroot /var/www/test.cizova.cz
+- mkdir /var/ww/test.cizova.cz
+- echo TEST > /var/www/test.cizova.cz/index.html
+- nano /etc/resolv.conf
+nameserver 192.168.56.101
+- nslookup test.cizova.cz
+- cd ..
+- cd sites-enabled
+- a2ensite test.cizova.cz //povoleni stranky
+ls -la (kontrola)
+- service apache2 restart
+- service apache2 status
+
+v nasem PC nastavit dns na 192.168.56.101 + alternativni 8.8.8.8 a v browseru test.cizova.cz zobrazi TEST
+
+- cd .. (/etc/apache2)
+- cd sites-available
+- cp test.cizova.cz wiki.cizova.cz
+- nano wiki.cizova.cz
+prepsat na wiki
+- cd ..
+- mkdir /var/www/wiki.cizova.cz
+- a2ensite wiki.cizova.cz
+- apt-get install libapache2-mod-php
+- apt-get install mysql-server (nainstaluje ale mariadb :D)
+- cd wiki.cizova.cz
+(mediawiki.org)
+- wget https://releases.wikimedia.org/mediawiki/1.30/mediawiki-1.30.0.tar.gz --no-check-certificate
+- mc
+- copy .tar obsah do var/www/wiki.cizova.cz
+- service apache2 restart
+- apt install php-mbstring
+- service apache2 restart
+- apt install php-xml
+- service apache2 restart
+- apt install php-mysql
+- service apache2 restart
+browser wiki.cizova.cz by melo fungovat :)
+- mysql -u root -p (heslo wiki)
+MariaDB [(none)]> use mysql
+MariaDB [mysql]> CREATE USER 'wiki'@'localhost' IDENTIFIED BY 'wiki';
+MariaDB [mysql]> \q
+- mysql -u root
+MariaDB [(none)]> CREATE DATABASE wiki;
+MariaDB [(none)]> use wiki
+MariaDB [wiki]> GRANT ALL ON wiki.* TO wiki@localhost;
+MariaDB [wiki]>\q
+
+
+browser: 
+jmeno databaze: wiki, heslo: wiki, nazev wiki: wiki, uživatelske jmeno: ciz0031, heslo: cizoveri0031 (uz me to nudi, nainstaluj..) - stahnout localsetting.php
+muj pc:
+scp localsetting.php ciz0031@192.168.56.101:/tmp
+
+- cd /var/www/wiki.cizova.cz
+- cp /tmp/LocalSettings.php
+
+----------------------------------------
+cv6 - poštovní server
+----------------------------------------
+DNS1 klon
+- vyzkouset nslookup post.cz
+- nano /etc/resolv.conf
+	nameserver 192.168.56.102 (ip machiny enp0s8)
+konfigurace na PC dat DNS 192.168.56.102
+- nslookup 
+>server 192.168.56.102 
+>set type=mx 
+>vsb.cz
+
+- telnet smtp.vsb.cz 25
+hello david
+mail from: david.seidl@vsb.cz
+rcpt to: david.seidl@vsb.cz
+Test smtp telnetem
+.
+quit
+
+putty ciz0031@192.168.56.102
+- apt install postfix
+internetovy pc
+- cd /etc/postfix
+- nano main.cf
+mydestination = smazat debian.vsb.cz, pridat cizova.cz
+relayhost = smtp.vsb.cz
+mynetworks = dopsat 192.168.56.0/24
+- service postfix restart
+- service postfix status
+
+terminal
+- telnet 192.168.56.102 25
+hello david
+mail from: david@seidl.cz
+rcpt to: david.seidl@vsb.cz
+data
+test potfixe
+.
+quit
+
+putty
+- ls /var/log/mail.
+- cat /var/log/mail.info - vypis logu
+
+DNS1
+watch ls
+tail sei01 -f 
+
+terminal
+- telnet 192.168.56.102 25
+hello david
+mail from: sei01@seidl.cz
+rcpt to: sei01@vsb.cz
+data
+data pro sei01
+.
+quit
+
+putty
+- nano /etc/aliases
+david: sei01@seidl.cz (preposilani, oddelene maily carkou - vytvoreni mailove skupiny)
+- newaliases
+- service postfix restart
+
+terminal
+- telnet 192.168.56.102 25
+hello david
+mail from: sei01@seidl.cz
+rcpt to: david@seidl.cz
+data
+test aliasu
+.
+quit
+(na DNS1 bude videt mail)
+
+
+putty
+- nano /etc/postfix/cannonical
+sei01@seidl.cz david@seidl.cz
+- postmap /etc/postfix/cannonical
+- nano /etc/postfix/main.cf
+sender_canonical_maps = hash:/etc/postfix/canonical
+recipient_canonical_maps = hash:/etc/postfix/canonical
+- service postfix restart
+
+terminal
+- telnet 192.168.56.102 25
+hello david
+mail from: sei01@seidl.cz
+rcpt to: david@seidl.cz
+data
+test cannonical
+.
+quit
+(na DNS1 bude videt mail ne od sei01 ale od david@seidl.cz)
+
+
+putty
+- postconf -m
+- nano /etc/postfix/main.cf
+home_mailbox = Maildir/
+- service postfix restart
+
+terminal
+- telnet 192.168.56.102 25
+hello david
+mail from: sei01@seidl.cz
+rcpt to: sei01@seidl.cz
+data
+test maildir
+.
+quit
+(DNS1 nic, -mc home/sei01/Maildir tam je!)
+
+putty
+- apt install dovecot-imapd
+- netstat -pln (143 nasloucha)
+- nano /etc/dovecot/conf.d/10-mail.conf
+mail_location = maildir:~/Maildir/
+- nano /etc/dovecot/conf.d/10-auth.conf
+disable_plaintext_auth = no
+- service dovecot restart
+- nano /etc/bind/db.cizova.cz
+dopsat (+ zmenit cislo!!)
+_smtp._tcp IN SRV 0 0 25 smtp.seidl.cz.
+_imap._tcp IN SRV 0 0 143 smtp.seidl.cz.
+- service bind9 restart
+- apt install roundcube
+	password rc
+nova putty ciz0031@192.168.56.102
+mysql -u root -p
+use mysql
+ CREATE USER 'rc'@'localhost' IDENTIFIED BY 'rc';
+\q
+-mysql -u root
+CREATE DATABASE rc
+use rc
+GRANT ALL ON rc.* TO rc@localhost;
+
+
+cd /var/www/html
+ln -s /var/lib/roundcube/ rc
+browser 192.168.56.102/rc zobrazi roundcube
+
+
+!!! pátek 13. prvni termín zapoctoveho testu
+
+
+
+
+
+
+
+
+
+

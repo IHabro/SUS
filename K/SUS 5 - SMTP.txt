@@ -1,0 +1,129 @@
+Udělat klon MAIL s IP .101
+
+MAIL:
+	apt install telnet
+	telnet smtp.vsb.cz 25
+
+		helo <login>
+		mail from <login>@vsb.cz
+		rcpt to <login>@vsb.cz
+		data
+		Test telnetu
+		.
+		quit
+
+	apt install postfix
+	(internet site, smtp.<login>.cz)
+
+	nano /etc/postfix/main.cf:
+		myhostname = smtp.<login>.cz
+		mydestination = ......, <login>.cz (dodat)
+
+Druhý terminál MAILu
+	tail -f /var/log/mail.log
+
+První:
+	telnet 127.0.0.1 25
+		helo <login>
+		mail from:<login>@<login>.cz
+		rcpt to:<login>@<login>.cz
+		data
+		Test telnetu
+		.
+		quit
+
+Na druhém to přijde
+
+třetí terminál: přihlásit se na 192.168.57.101:25
+	helo <login>
+	poslat mail, mělo by jet a na tailu to šlo vidět
+	nelze poslat mail na doménu vsb.cz
+
+	nelze ani poslat na mail na neexistujícího usera
+
+První 
+	nano /etc/postfix/main.cf:
+		realyhost = smtp.vsb.cz
+		mynetworks = přidat 192.168.57.0/24
+
+	měl by jet email na doménu školy
+
+	nano /etc/postfix/main.cf:
+		alias_maps =
+		alias_database
+
+	nano /etc/aliases:
+		vojta:	<login>@<login>.cz
+
+	newaliases
+
+	nano /etc/postfix/canonical:
+		<login>@<login>.cz	vojta@<login>.cz
+
+	postmap /etc/postfix/canonical
+	ls /etc/postfix/canonical*
+
+	poslat mail na vojta@<login>.cz by mělo jít
+
+	nano /etc/postfix/main.cf přidat:
+		sender_canonical_maps = hash:/etc/postfix/canonical
+		recipient_canonical_maps = hash:/etc/postfix/canonical
+
+	poslat mail a vyzkoušet překlad jmen na canonical, from bude vojta
+
+druhý:
+	tady to budu číst
+
+první:
+	nano /etc/postfix/main.cf přidat:
+		home_mailbox = Maildir/
+	systemctl restart postfix
+
+poslat mail, vytvoří se soubor s mailem do Maildir složky uživateli <login> (/home/<login>/Maildir/)
+
+	apt install dovecot-imapd
+	nano /etc/dovecot/conf.d/10-mail.conf:
+		mail_location = maildir:~/Maildir/
+
+	nano /etc/dovecot/conf.d/10-auth.conf:
+		disable_plaintext_auth = no
+
+	service dovecot restart
+	apt install apache2 libapache2-mod-php mariadb-server roundcube
+
+	ano, připojit k db
+
+	ls /var/lib/roundcube/
+
+	cd  /var/www/html/ 
+	ln -s /var/lib/roundcube/
+
+	cd /etc/roundcube
+	nano config.inc.php:
+		$config['default_host'] = '127.0.0.1';
+		$config['smtp_server'] = '127.0.0.1';
+		$config['smtp_port'] = 25;
+		$config['smtp_user'] = '';
+		$config['smtp_pass'] = '';
+
+	192.168.57.101/roundcube
+
+
+na DNS:
+	do dns konfiguráku přidat imapd
+		IMAP IN CNAME smtp.<login>.cz
+
+		smtp._tcp IN SRV 1 2 25 smtp.<login>.cz
+		imap._tcp IN SRV 1 2 143 imap.<login>.cz
+
+		update čísla
+
+	service bind9 restart
+
+někde: (úplně nevím, jestli tohle má vůbec fungovat)
+	ping smtp.<login>.cz	
+	ping imap.<login>.cz	
+
+smtp relay restriction = když neposílá email na svou doménu, tak se snaží o relay - dostat MX záznam hledaného serveru (2 skoky)
+relay host = s relay poštou to přepošli na tenhle server
+mynetworks = rozsah adres, odkud se dá posílat relay email

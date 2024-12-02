@@ -1,0 +1,138 @@
+NB Server
+
+-nano /etc/network/interfaces 
+	allow-hotplug enp0s8
+	iface enp0s8 inet static
+		address 192.168.57.2/24
+
+-apt install isc-dhcp-server
+-nano /etc/default/isc-dhcp-server 
+interfacesv4="enp0s8"
+
+-nano /etc/dhcp/dhcpd.conf
+option domain-name "vsb.cz" 
+option domain-name-servers 158.196.0.53
+
+subnet 192.168.57.0 netmask 255.255.255.0 {
+	range 192.168.57.100 192.168.57.200;
+	option broadcast-address 192.168.57.255;
+	option routers 192.168.57.2;
+	next-server 192.168.57.2;
+	filename "pxelinux.0";
+	}
+
+-dhcpd -t 
+-service isc-dhcp-server restart
+-service isc-dhcp-server status
+
+-nft add table nat
+-nft add chain nat postrouting { type nat hook postrouting priority 100 \; }
+-nft add rule nat postrouting masquerade
+-nft list ruleset > /etc/nftables.conf
+-systemctl nftables enable
+
+-service nftables status
+-systemctl enable nftables
+-service nftables status
+
+-echo 1 > /proc/sys/net/ipv4/ip_forward
+
+-apt install tftpd-hpa
+
+-cd /srv/tftp
+-echo ahoj > test.txt
+
+NB Test
+
+-apt install tftp-hpa
+-tftp 192.168.57.2
+	binary
+	get test.txt
+	quit
+	cat test.txt
+
+NB Server
+
+-apt install wget http://ftp.debian.org/debian/dists/stable/main/installer-amd64/current/images/netboot/netboot.tar.gz
+-mc (copy all to /srv/tftp)
+
+-mkdir Debian
+-cd Debian/
+-mkdir root
+
+-apt install nfs-kernel-server
+-nano /etc/exports
+
+/srv/tftp/Debian/root     192.168.57.0/24(rw,async,no_root_squash)   
+/home			  192.168.57.0/24(rw,async)
+
+NB Test
+
+-apt install nfs-common
+-mount 192.168.57.2:/srv/tftp/Debian/root /mnt/
+-cd /mnt/
+-touch pokus.txt
+
+mc koren -> Debian/root
+
+bin   -> cp
+boot  -> cp
+dev
+etc   -> cp
+home  -> cp
+lib   -> cp
+lib64 -> cp
+media
+mnt
+opt   -> cp
+proc
+root  -> cp
+run
+sbin  -> cp
+srv
+sys
+tmp   -> t-bit
+usr   -> cp
+var   -> cp
+
+-mkdir dev media mnt proc run srv sys tmp
+-chmod 777 ./tmp
+-chmod o+t ./tmp
+
+-mc (do /srv/tftp)
+
+ldlinux.c32
+libcom32.c32
+libutil.c32
+pxelinux.cfg
+pxelinux.0
+vesamenu.c32
+
+-mc (do Debian initrid a vmlinuz)
+
+-nano default
+
+DEFAULT vesamenu.c32
+PROMPT 0
+
+MENU TITLE  Boot Menu
+
+LABEL Debian - NetBoot
+KERNEL /Debian/vmlinuz-6.1.0-20-amd64
+APPEND initrd=/Debian/initrd.img-6.1.0-20-amd64 root=/dev/nfs nfsroot=192.168.57.2:/srv/tftp/Debian/root ip=dhcp rw
+
+LABEL Debian Installer - NetBoot
+KERNEL tmp/debian-installer/amd64/linux
+APPEND vga=788 initrd=tmp/debian-installer/amd64/initrd.gz --- quiet 
+
+-service tftpd-hpa restart
+
+ve filesystému klienta měnit!
+		cd /srv/tftp/Debian/root
+
+		nano ./etc/network/interfaces
+			zakomentit tam interfacy
+		nano ./etc/fstab
+			všechno zakomentit
+
+mount -o remount,rw /

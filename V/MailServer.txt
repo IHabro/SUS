@@ -1,0 +1,308 @@
+# Mail server
+
+- všechno se konfiguruje na počítači který je uvedený
+
+1. Nový virtuální počítač (`DNS_1`) a jeho nastavení
+    - linked clone
+    - settings -> network
+        - adapter 1 = NAT
+        - adapter 2 = Host-only Adapter - vboxnet0
+    - pro přehlednost přejmenovat pc
+        - `/etc/hostname`
+        - `hostname DNS1`
+    - pro nastavení statické ip adresy (zejména pro SSH)
+        - přidat do `/etc/network/interfaces`
+            ```
+            allow-hotplug enp0s8
+            iface enp0s8 inet static
+                address 192.168.56.21/24
+            ```
+        - `ifdown enp0s8` - možná bude potřeba nejdříve vypnout
+        - `ifup enp0s8` - zapnutí interface
+        - `ip a` - výpis ip adres
+    - `shutdown now -r`
+
+2. Instalace `bind9` server pro správu DNS
+    - `DNS_1`
+        - `apt install bind9 -y`
+        - `apt install dnsutils udns-utils -y`
+        - `nslookup www.vsb.cz` - informace o DNS (aktuálně se používá DNS virtual boxu)
+        - `nslookup www.vsb.cz 8.8.8.8` - informace o DNS (teď se používá DNS od googlu)
+        - zatím nefunguje školní DNS
+        - `cd /etc/bind`
+        - v `named.conf.options` odkomentovat `forwarders` a dát školní ip (`158.196.0.53`)
+        - `service bind9 restart`
+        - `service bind9 status`
+        - už funguje školní DNS jako "cashovací DNS"
+        - `nslookup www.vsb.cz 158.196.0.53` - školní DNS
+        - `nslookup www.vsb.cz 192.168.56.21` - DNS virtuálního počítače
+
+3. Zprovoznění naší DNS pro vlastní doménu
+    - `DNS_1`
+        - (`cd /etc/bind`)
+        - vytvořit soubor `db.hab0065.cz` a vložit
+            ```
+            $TTL 3h				   ;doba expirace všech záznamů
+            @       IN      SOA     dns1.hab0065.cz. spravce.hab0065.cz. (  ; autoritativní DNS server + email správce bez @
+                                    2024112602 ; seriové číslo, často ve formě data
+                                    4h         ; jak často si stahuje data sekundární server
+                                    2h         ; za jak dlouho se má sek.server pokusit stáhnout data při neúspěchu
+                                    2w         ; kdy platnost dat v sek.serveru vyprší
+                                    1h )       ; jak dlouho si mají data pamatovat cache servery
+            ;
+            @       IN      NS      dns1.hab0065.cz. ; autoritativní servery pro doménu, musí mít i A záznamy
+            @       IN      NS      dns2.hab0065.cz. ; autoritativní servery pro doménu, musí mít i A záznamy
+
+
+            hab0065.cz.    IN      MX      10      smtp.hab0065.cz.  ; primární emailový server
+            hab0065.cz.    IN      MX      20      smtp2.hab0065.cz. ; sekundární emailový server
+            hab0065.cz.    IN      A       192.168.56.80             ; primární záznamy
+            dns1           IN      A       192.168.56.21
+            dns2           IN      A       192.168.56.21
+            smtp           IN      A       192.168.56.25
+            smtp2          IN      A       192.168.56.25
+            www            IN      CNAME   www1.hab0065.cz.
+            wiki	       IN      CNAME   www1.hab0065.cz.
+            test	       IN      CNAME   www1.hab0065.cz.
+            subdomena1     IN      A       192.168.56.80
+            subdomena2     IN      CNAME   hab0065.cz.
+            www1	       IN      A       192.168.56.80
+            www2           IN      A       192.168.56.80
+
+            _http._tcp     IN      SRV     1 2 80  www1 ; _http sluzba, _tcp protokol, 1 priorita, 2 váha
+                        IN      SRV     5 3 80  www2
+
+            _http._tcp.www IN      SRV     1 2 80  www1.hab0065.cz. ; _http sluzba, _tcp protokol, 1 priorita, 2 váha
+                        IN      SRV     5 3 80  www2.hab0065.cz.
+
+            *._tcp         IN      SRV     0 0 0   .  ;ostatní služby nejsou podporovány
+            ```
+        - typy záznámu
+            - `SOA` - první záznam v zónové tabulce
+            - `MX` - mailové záznamy
+            - `A` - definuje překlad domény na ip adresu
+            - `CNAME` - "alias"
+            - `SRV` - specifikace který server se stará o danou službu pro naši doménu
+        - do `named.conf.default-zones` přidat
+            ```
+            zone "hab0065.cz" {
+                type master;    
+                file "/etc/bind/db.hab0065.cz";
+            };
+            ```
+            - `named-checkzone hab0065.cz db.hab0065.cz` - kontrola nastavení
+        - `service bind9 restart`
+        - `service bind9 status`
+        - teď už naše DNS zná naši novou doménu
+        - `nslookup www.hab0065.cz 8.8.8.8` - nefunguje
+        - `nslookup www.hab0065.cz 192.168.56.21` - funguje
+        - (`named.conf` a `/usr/share/dns/root.hints` - není potřeba měnit, jen tam jsou některé nastavení)
+
+5. Vytvoření virtuálního počítače pro LAMP server (`LAMP`)
+    - linked clone
+        - settings -> network
+            - adapter 1 = NAT
+            - adapter 2 = Host-only Adapter - vboxnet0
+        - pro přehlednost přejmenovat pc
+            - `/etc/hostname`
+            - `hostname LAMP`
+        - pro nastavení statické ip adresy (zejména pro SSH)
+            - přidat do `/etc/network/interfaces`
+                ```
+                allow-hotplug enp0s8
+                iface enp0s8 inet static
+                    address 192.168.56.80/24
+                ```
+            - `ifdown enp0s8` - možná bude potřeba nejdříve vypnout
+            - `ifup enp0s8` - zapnutí interface
+            - `ip a` - výpis ip adres
+        - `shutdown now -r`
+
+6. Nastavení LAMP serveru
+    - `LAMP`
+        - `apt install apache2 -y`
+        - `cd /etc/apache2`
+        - kontrola v prohlížeči `http://192.168.56.80/`
+        - (`apache2.conf`, `envvars` a `ports.conf` není potřeba měnit, jen tam jsou některé nastavení)
+        - dostupné - `conf-available`, `mods-available` moduly, `sites-available` stránky
+        - aktivované - `*-enabled`
+        - povolení ssl
+            - `cd mods-enabled/`
+            - `a2enmod ssl`
+            - `systemctl restart apache2`
+            - `cd ../sites-available`
+            - `a2ensite default-ssl.conf`
+            - `systemctl reload apache2`
+        - teď už v prohlížeči funguje i `https://192.168.56.80/`
+        - `apt install libapache2-mod-php -y`
+        - zprovoznění testovací stránky
+            - (`cd /etc/apache2/sites-available/`)
+            - `cp 000-default.conf www.hab0065.cz.conf`
+            - v `www.hab0065.cz.conf` odkomentovat a upravit `ServerName www.hab0065.cz` a upravit `DocumentRoot /var/www/www.hab0065.cz`
+            - `cd /var/www`
+            - `mkdir www.hab0065.cz`
+            - `cd www.hab0065.cz`
+            - vytvořit `index.php` s nějakým obsahem, například
+                ```php
+                <?php
+                    phpinfo()
+                ?>
+                ```
+            - `cd /etc/apache2/sites-available/`
+            - `a2dissite 000-default`
+            - `a2ensite www.hab0065.cz`
+            - `systemctl reload apache2`
+            - zatím si nebudeme stránku moct zobrazit, ještě je pravděpodobně potřeba upravit nastavení virtuálního počítače `DNS1`
+                - v `/etc/bind/db.hab0065.cz` upravit ip adresy u `www1           IN      A       192.168.56.80` a `www2           IN      A       192.168.56.81` a aktualizovat "verzi" dokumentu
+                - `service bind9 restart`
+                - `service bind9 status`
+            - otestování funkčnosti DNS na virtuálním počítači `LAMP`
+                - `apt install dnsutils -y`
+                - `nslookup www.hab0065.cz 192.168.56.21`
+                - `/etc/resolv.conf` musí mít `nameserver` jen naší DNS
+                - `chattr +i /etc/resolv.conf` - někdy to přepíše `nameserver` zpátky, tak takhle se zakáže editace toho souboru
+                - (pokud se nechce zobrazit, tak alespoň `lynx 192.168.56.80` by měl fungovat (nefunguje DNS))
+            - kontrola funkčnosti webové stránky a php pomocí prohlížeče v cmd
+                - `apt install lynx -y`
+                - `lynx www.hab0065.cz`
+
+7. Zprovoznění MediaWiki
+    - `LAMP`
+        - `cd /etc/apache2/sites-available/`
+        - `cp www.hab0065.cz.conf wiki.hab0065.cz.conf`
+        - v `wiki.hab0065.cz.conf` upravit `ServerName` a `DocumentRoot`
+        - `a2ensite wiki.hab0065.cz.conf`
+        - `systemctl reload apache2`
+        - `ls ../sites-enabled/` - kontrola zapnutí wiki stránky
+        - `cd /var/www/`
+        - `apt install wget -y`
+        - `wget https://releases.wikimedia.org/mediawiki/1.42/mediawiki-1.42.3.zip`
+        - `apt install unzip`
+        - `unzip mediawiki-1.42.3.zip` - přes `mc` to bude nadlouho
+        - `mkdir wiki.hab0065.cz`
+        - `mv mediawiki-1.42.3/* wiki.hab0065.cz`
+        - `apt install php-mbstring php-xml php-intl -y`
+        - `apt install php-mysql -y`
+        - `apt install mariadb-server -y`
+        - vytvoření uživatele v databázi
+            - `mysql -u root -p`
+            - postupně zadávat tyhle příkazy
+                ```
+                use mysql
+                CREATE USER 'wiki'@'localhost' IDENTIFIED BY 'wiki';
+                \q
+                ```
+        - `mysql -u root`
+            - postupně zadávat tyhle příkazy
+                ```
+                CREATE DATABASE wiki;
+                use wiki
+                GRANT ALL ON wiki.* TO wiki@localhost;
+                \q
+                ```
+        - nastavení Media Wiki přes webové GUI nebo v terminálu přes Lynx podle wizarda
+        - kopírování `LocalSettings.php`
+            - `scp LocalSettings.php 192.168.56.80:/tmp`
+            - `cp /tmp/LocalSettings.php /var/www/wiki.hab0065.cz`
+
+8. Instalace postfixu
+    - `LAMP`
+        - `apt install postfix -y`
+            - `InternetSite`
+            - `hab0065.cz`
+        - kontrola že `postfix` běží
+            - `apt install net-tools`
+            - `netstat -pln` (:::22 a :::25)
+
+9. Nastavení postfixu
+    - `LAMP`
+        - `/etc/postfix/main.cf` upravit takhle
+            ```
+            myhostname = smtp.hab0065.cz
+            mydestination = $myhostname, smtp.hab0065.cz, localhost, hab0065.cz
+            relayhost = smtp.vsb.cz
+            ```
+        - `service postfix restart`
+        - `service postfix status`
+        - (`postfix reload`)
+        - test odeslání emailu
+            - `apt install telnet -y`
+            - `telnet smtp.hab0065.cz 25`
+                ```
+                helo vojta
+                mail from: hab0065@hab0065.cz
+                rcpt to: hab0065@hab0065.cz
+                data
+                testovaci email
+                .
+                :q
+                ```
+            - `/var/mail/hab0065` - zde se nachází (lokálně) doručený email
+        - pro zprovoznění realy do `/etc/postfix/main.cf` pro `mynetworks` dopsat `192.168.56.0/24` (není potřeba dělat)
+            - `service postfix restart`
+            - `service postfix status`
+            - test relay
+                - `telnet smtp.hab0065.cz 25`
+                    ```
+                    helo vojta
+                    mail from: hab0065@hab0065.cz 
+                    rcpt to: hab0065@vsb.cz
+                    data
+                    hello from my smtp
+                    .
+                    ```
+        - vytvoření aliasů (není potřeba dělat)
+        - nastavení canonical (není potřeba dělat)
+        - nastavení `Maildir`
+            - na konec `/etc/postfix/main.cf` souboru dopsat `home_mailbox = Maildir/`
+            - `service postfix restart`
+            - `service postfix status`
+            - test
+                - `telnet smtp.hab0065.cz 25`
+                    ```
+                    helo vojta
+                    mail from: hab0065@hab0065.cz
+                    rcpt to: hab0065@hab0065.cz
+                    data
+                    hello world
+                    .
+                    :q
+                    ```
+                - emaily od teď chodí do složky `/home/hab0065/Maildir/new/`
+
+10. Instalace a nastavení `imap dovecot` (server příchozí pošty)
+    - `LAMP`
+        - `apt install dovecot-imapd -y`
+        - `cd /etc/dovecot/conf.d`
+        - v souboru `10-auth.conf` odkomentovat a přepsat na `disable_plaintext_auth = no`, ať se můžeme ověřovat nebezpečným způsobem
+        - v souboru `10-mail.conf` upravit `mail_location = maildir:~/Maildir/`
+        - `service dovecot restart`
+        - ` `
+
+11. Instalace `roundcube`
+    - `LAMP`
+	- mysql -u root -p
+	- use mysql
+	- CREATE USER 'roundcube'@'localhost' IDENTIFIED BY 'roundcube';
+	- \q
+	- mysql -u root
+	- CREATE DATABASE roundcube;
+	- use roundcube
+	- GRANT ALL ON roundcube.* TO roundcube@localhost;
+	- \q
+
+        - `apt install roundcube -y`
+            - `yes`
+            - `root`
+        - `cd /etc/apache2/sites-available/`
+        - `cp 000-default.conf mail.hab0065.cz.conf`
+        - v souboru `mail.hab0065.cz.conf` odkomentovat a upravit `ServerName mail.hab0065.cz` a upravit `DocumentRoot /var/www/roundcube`
+        - `a2ensite mail.hab0065.cz`
+        - `systemctl reload apache2`
+        - `DNS_1`
+            - v `/etc/bind/db.hab0065.cz` dopsat `mail           IN      CNAME   www1.hab0065.cz.`
+            - `service bind9 restart`
+            - `service bind9 status`
+        - `cd /var/www`
+        - `ln -s /var/lib/roundcube/`
+        - `lynx mail.hab0065.cz` - emailový klient by měl fungovat
